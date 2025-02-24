@@ -129,20 +129,16 @@ def create_graph(ipfs_tools):
 
     class RunIPFSTool:
         async def ainvoke(self, state, config=None):
-            print("Running IPFS upload tool...")
             new_messages = []
             last_message = state["messages"][-1]
             
             for tool_call in last_message.tool_calls:
                 try:
-                    print(f"Executing tool: {tool_call['name']}")
-                    
                     # Extract just the string value for image_data if that's the parameter
                     if 'image_data' in tool_call['args']:
                         # Make sure we're passing just the URL string, not a complex object
                         image_url = tool_call['args']['image_data']
                         result = await upload_to_ipfs_tool.ainvoke({"image_data": image_url})
-                        print(f"IPFS upload result: {result}")
                     else:
                         result = await upload_to_ipfs_tool.ainvoke(tool_call['args'])
                     
@@ -157,13 +153,12 @@ def create_graph(ipfs_tools):
                     ))
                     
                 except Exception as e:
-                    print(f"Error executing tool {tool_call['name']}: {str(e)}")
                     new_messages.append(ToolMessage(
                         content=f"Error executing tool: {str(e)}",
                         name=tool_call['name'],
                         tool_call_id=tool_call['id'],
                     ))
-                    
+            
             return {"messages": new_messages}
 
     class GenerateMetadata:
@@ -221,7 +216,6 @@ Format your response exactly like this:
             
             # Get LLM to generate metadata suggestions in the correct format
             metadata_response = await metadata_llm.ainvoke([metadata_prompt])
-            print(f"Metadata generation response: {metadata_response.content}")
             
             # Store the IPFS URI in the message for the next node
             return {
@@ -232,7 +226,7 @@ Format your response exactly like this:
 
     class CreateMetadata:
         async def ainvoke(self, state, config=None):
-            print("Creating metadata on IPFS...")
+            print("Creating metadata...")
             new_messages = []
             
             # Get the metadata suggestions from the LLM
@@ -250,7 +244,6 @@ Format your response exactly like this:
             
             # Extract the JSON part of the message
             metadata_content = metadata_message.content.split("IPFS_URI:")[1].split("\n\n", 1)[1]
-            print(f"Extracted metadata content: {metadata_content}")
             
             try:
                 # Try to parse the JSON directly from the LLM response
@@ -261,7 +254,6 @@ Format your response exactly like this:
                 json_match = re.search(r'\{.*\}', metadata_content, re.DOTALL)
                 if json_match:
                     json_str = json_match.group(0)
-                    print(f"Extracted JSON: {json_str}")
                     metadata_dict = json.loads(json_str)
                     
                     name = metadata_dict.get("name", "AI Generated Artwork")
@@ -282,7 +274,6 @@ Format your response exactly like this:
                         ]
                 else:
                     # Fallback to manual parsing if JSON extraction fails
-                    print("JSON parsing failed, falling back to manual extraction")
                     name = "AI Generated Artwork"
                     description = "An AI-generated artwork uploaded to IPFS"
                     
@@ -304,8 +295,6 @@ Format your response exactly like this:
                         {"trait_type": "creator", "value": "AI"}
                     ]
                 
-                print(f"Calling create_ip_metadata with: URI={ipfs_uri}, name={name}, description={description}, attributes={valid_attributes}")
-                
                 # Call the create_ip_metadata tool with properly formatted data
                 result = await create_metadata_tool.ainvoke({
                     "image_uri": ipfs_uri,
@@ -314,8 +303,6 @@ Format your response exactly like this:
                     "attributes": valid_attributes
                 })
                 
-                print(f"Metadata creation result: {result}")
-                
                 new_messages.append(ToolMessage(
                     content=result,
                     name="create_ip_metadata",
@@ -323,9 +310,6 @@ Format your response exactly like this:
                 ))
                 
             except Exception as e:
-                print(f"Error creating metadata: {str(e)}")
-                import traceback
-                traceback.print_exc()
                 new_messages.append(ToolMessage(
                     content=f"Error creating metadata: {str(e)}",
                     name="create_ip_metadata",
@@ -336,9 +320,7 @@ Format your response exactly like this:
 
     def human_review_node(state):
         last_message = state["messages"][-1]
-        print(f"Message type: {type(last_message)}")
-        print(f"Message content: {last_message.content}")
-
+        
         # Get image URL from the tool message
         image_url = last_message.content.split("Generated image URL: ")[1]
         
@@ -379,7 +361,7 @@ Format your response exactly like this:
                     break
             
             if is_first_negotiation:
-                print("Starting terms negotiation...")
+                print("Negotiating terms...")
             else:
                 print("Deliberating...")
             
@@ -394,7 +376,7 @@ Format your response exactly like this:
                             registration_metadata = json.loads(metadata_section)
                             break
                         except json.JSONDecodeError:
-                            print("Failed to parse registration metadata JSON")
+                            pass
             
             if not registration_metadata:
                 return {"messages": [AIMessage(content="Failed to extract registration metadata from previous steps.")]}
@@ -427,6 +409,8 @@ For derivatives allowed:
 
 Your goal is to help the user understand these terms and reach a fair agreement.
 Start by explaining these options and suggesting reasonable defaults based on the artwork.
+DO NOT use markdown formatting in your response.
+Keep your explanation concise and user-friendly.
             """
             
             # First message to explain terms and suggest defaults
@@ -493,6 +477,7 @@ For derivatives:
 - If they've allowed derivatives but the artwork is highly unique, mention they might want to consider restrictions
 
 Only suggest changes if the terms are significantly outside reasonable ranges.
+DO NOT use markdown formatting in your response.
                 """
             )
             
@@ -582,7 +567,7 @@ Registration metadata is ready for minting.
 
     class MintRegisterIP:
         async def ainvoke(self, state, config=None):
-            print("Minting and registering IP with terms...")
+            print("Minting and registering IP...")
             
             # Get the terms data from the previous message
             terms_data = None
@@ -600,8 +585,6 @@ Registration metadata is ready for minting.
                 derivatives_allowed = terms_data["derivatives_allowed"]
                 registration_metadata = terms_data["registration_metadata"]
                 
-                print(f"Calling mint_and_register_ip_with_terms with: commercial_rev_share={commercial_rev_share}, derivatives_allowed={derivatives_allowed}, registration_metadata={registration_metadata}")
-                
                 # Call the mint_and_register_ip_with_terms tool
                 result = await mint_register_ip_tool.ainvoke({
                     "commercial_rev_share": commercial_rev_share,
@@ -609,31 +592,35 @@ Registration metadata is ready for minting.
                     "registration_metadata": registration_metadata
                 })
                 
-                print(f"Mint and register IP result: {result}")
-                
                 # Check if there was an error related to derivatives
                 if "Cannot add derivative attribution when derivative use is disabled" in result:
-                    print("Error with derivatives settings. Retrying with derivatives allowed...")
-                    
                     # Retry with derivatives allowed
                     result = await mint_register_ip_tool.ainvoke({
                         "commercial_rev_share": commercial_rev_share,
                         "derivatives_allowed": True,  # Force derivatives to be allowed
                         "registration_metadata": registration_metadata
                     })
-                    
-                    print(f"Retry mint and register IP result: {result}")
                 
                 # Parse the result to extract IP ID and license terms IDs for the next step
                 import re
                 
                 ip_id = None
+                tx_hash = None
                 license_terms_ids = []
                 
                 # Extract IP ID
                 ip_id_match = re.search(r'IP ID: (0x[a-fA-F0-9]+)', result)
                 if ip_id_match:
                     ip_id = ip_id_match.group(1)
+                    # Print the IP link in the requested format
+                    print(f"\n@https://aeneid.explorer.story.foundation/ipa/{ip_id}")
+                
+                # Extract Transaction Hash
+                tx_hash_match = re.search(r'Transaction Hash: ([a-fA-F0-9]+)', result)
+                if tx_hash_match:
+                    tx_hash = tx_hash_match.group(1)
+                    # Print the transaction link in the requested format
+                    print(f"@https://aeneid.storyscan.xyz/tx/0x{tx_hash}")
                 
                 # Extract License Terms IDs
                 license_terms_match = re.search(r'License Terms IDs: \[(.*?)\]', result)
@@ -646,19 +633,25 @@ Registration metadata is ready for minting.
                 # If we still don't have an IP ID, the minting failed
                 if not ip_id:
                     # Try one more time with more reasonable defaults
-                    print("Minting failed. Trying again with recommended defaults...")
                     result = await mint_register_ip_tool.ainvoke({
                         "commercial_rev_share": 15,  # Use a reasonable default
                         "derivatives_allowed": True,  # Allow derivatives
                         "registration_metadata": registration_metadata
                     })
                     
-                    print(f"Default parameters mint result: {result}")
-                    
                     # Extract IP ID again
                     ip_id_match = re.search(r'IP ID: (0x[a-fA-F0-9]+)', result)
                     if ip_id_match:
                         ip_id = ip_id_match.group(1)
+                        # Print the IP link in the requested format
+                        print(f"\n@https://aeneid.explorer.story.foundation/ipa/{ip_id}")
+                    
+                    # Extract Transaction Hash again
+                    tx_hash_match = re.search(r'Transaction Hash: ([a-fA-F0-9]+)', result)
+                    if tx_hash_match:
+                        tx_hash = tx_hash_match.group(1)
+                        # Print the transaction link in the requested format
+                        print(f"@https://aeneid.storyscan.xyz/tx/0x{tx_hash}")
                     
                     # Extract License Terms IDs again
                     license_terms_match = re.search(r'License Terms IDs: \[(.*?)\]', result)
@@ -675,16 +668,14 @@ Registration metadata is ready for minting.
                         additional_kwargs={
                             "minting_data": {
                                 "ip_id": ip_id,
-                                "license_terms_ids": license_terms_ids
+                                "license_terms_ids": license_terms_ids,
+                                "tx_hash": tx_hash
                             }
                         }
                     )]
                 }
                 
             except Exception as e:
-                print(f"Error minting and registering IP: {str(e)}")
-                import traceback
-                traceback.print_exc()
                 return {
                     "messages": [ToolMessage(
                         content=f"Error minting and registering IP: {str(e)}",
@@ -715,15 +706,19 @@ Registration metadata is ready for minting.
                 if not license_terms_id:
                     return {"messages": [AIMessage(content="No license terms ID available for minting license tokens.")]}
                 
-                print(f"Calling mint_license_tokens with: licensor_ip_id={ip_id}, license_terms_id={license_terms_id}")
-                
                 # Call the mint_license_tokens tool
                 result = await mint_license_tokens_tool.ainvoke({
                     "licensor_ip_id": ip_id,
                     "license_terms_id": license_terms_id
                 })
                 
-                print(f"Mint license tokens result: {result}")
+                # Extract Transaction Hash for license token
+                import re
+                tx_hash_match = re.search(r'Transaction Hash: ([a-fA-F0-9]+)', result)
+                if tx_hash_match:
+                    tx_hash = tx_hash_match.group(1)
+                    # Print the transaction link in the requested format
+                    print(f"@https://aeneid.storyscan.xyz/tx/0x{tx_hash}")
                 
                 return {
                     "messages": [ToolMessage(
@@ -734,9 +729,6 @@ Registration metadata is ready for minting.
                 }
                 
             except Exception as e:
-                print(f"Error minting license tokens: {str(e)}")
-                import traceback
-                traceback.print_exc()
                 return {
                     "messages": [ToolMessage(
                         content=f"Error minting license tokens: {str(e)}",
@@ -851,21 +843,26 @@ async def run_agent():
         # Process all events and handle interrupts at any stage
         async def process_events(input_data):
             async for event in graph.astream(input_data, config, stream_mode="updates"):
-                # Only print user-facing messages, not technical details
+                # Only process interrupts
                 if "__interrupt__" in event:
                     interrupt_data = event["__interrupt__"][0].value
                     
                     # Check which type of interrupt we're dealing with
                     if "image_url" in interrupt_data:
                         # This is the image review interrupt
+                        # Display the image URL once so the user can see what was generated
+                        print(f"\nGenerated image: {interrupt_data['image_url']}\n")
+                        
                         user_input = input("Do you like this image? (yes/no + feedback): ")
                         
                         if user_input.lower().startswith('yes'):
                             # Continue to IPFS upload
+                            print("Uploading image to IPFS...")
                             await process_events(Command(resume={"action": "continue"}))
                         else:
                             # Get feedback after "no"
                             feedback = user_input[4:] if len(user_input) > 4 else "Please generate a different image"
+                            print("Generating a new image...")
                             await process_events(
                                 Command(
                                     resume={
@@ -1007,16 +1004,18 @@ async def run_agent():
                     
                     else:
                         # Generic interrupt handler for any other interrupts
-                        print("Received interrupt:", interrupt_data)
                         user_input = input("Enter your response: ")
                         await process_events(Command(resume={"data": user_input}))
+                
+                # For non-interrupt events, we don't need to print anything
+                # This keeps the output clean and focused on user interactions
         
         # Start the initial processing
         await process_events(initial_input)
         
         print("\n=== Process Complete ===")
         print("Your NFT has been successfully created and registered with Story Protocol!")
-        print("Thank you for using the Story Protocol NFT Creator.")
+        print("Thank you for using the Story IP Creation Agent.")
 
 if __name__ == "__main__":
     import asyncio
