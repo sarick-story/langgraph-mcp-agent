@@ -1,10 +1,9 @@
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import ChatOpenAI
 from langchain_community.utilities.dalle_image_generator import DallEAPIWrapper
-from typing import Annotated, TypedDict, Literal
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
+from typing import Annotated, TypedDict
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END, MessagesState
-from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command, interrupt
@@ -12,7 +11,6 @@ from loguru import logger
 from langsmith import Client, traceable
 import uuid
 from langchain_core.runnables import RunnableLambda
-from langchain_core.runnables import RunnableWithMessageHistory, RunnableWithFallbacks
 
 # Initialize LangSmith client
 langsmith_client = Client()
@@ -57,7 +55,7 @@ async def setup_mcp_client():
             args=["/Users/sarickshah/Documents/story/story-sdk-mcp/server.py"],
         )
         ipfs_tools = [tool for tool in client.get_tools() 
-                      if tool.name in ["upload_image_to_ipfs", "create_ip_metadata"]]
+                      if tool.name in ["upload_image_to_ipfs", "create_ip_metadata", "mint_and_register_ip_with_terms", "mint_license_tokens"]]
         return ipfs_tools
 
 class State(MessagesState):
@@ -68,14 +66,25 @@ def create_graph(ipfs_tools):
     try:
         upload_to_ipfs_tool = next(tool for tool in ipfs_tools if tool.name == "upload_image_to_ipfs")
         create_metadata_tool = next(tool for tool in ipfs_tools if tool.name == "create_ip_metadata")
+        mint_register_ip_tool = next(tool for tool in ipfs_tools if tool.name == "mint_and_register_ip_with_terms")
+        mint_license_tokens_tool = next(tool for tool in ipfs_tools if tool.name == "mint_license_tokens")
     except StopIteration:
         print("Error: Could not find required tools. Available tools:")
         for tool in ipfs_tools:
             print(f"- {tool.name}")
-        raise ValueError("Missing required tools. Make sure both 'upload_image_to_ipfs' and 'create_ip_metadata' are available.")
+        raise ValueError("Missing required tools. Make sure all required tools are available.")
     
     # Initialize model with all tools available
-    model = ChatOpenAI(model="gpt-4o").bind_tools([generate_image, upload_to_ipfs_tool, create_metadata_tool])
+    model = ChatOpenAI(model="gpt-4o").bind_tools([
+        generate_image, 
+        upload_to_ipfs_tool, 
+        create_metadata_tool,
+        mint_register_ip_tool,
+        mint_license_tokens_tool
+    ])
+    
+    # Simpler model for negotiation and other tasks
+    simple_model = ChatOpenAI(model="gpt-4o-mini")
 
     class CallLLM:
         async def ainvoke(self, state, config=None):
@@ -367,6 +376,311 @@ Format your response exactly like this:
                 "next": "call_llm"
             }
 
+    class NegotiateTerms:
+        async def ainvoke(self, state, config=None):
+            print("Starting terms negotiation...")
+            
+            # Get the registration metadata from the previous message
+            registration_metadata = None
+            for message in reversed(state["messages"]):
+                if isinstance(message, ToolMessage) and message.name == "create_ip_metadata":
+                    if "Registration metadata for minting:" in message.content:
+                        metadata_section = message.content.split("Registration metadata for minting:")[1].strip()
+                        import json
+                        try:
+                            registration_metadata = json.loads(metadata_section)
+                            break
+                        except json.JSONDecodeError:
+                            print("Failed to parse registration metadata JSON")
+            
+            if not registration_metadata:
+                return {"messages": [AIMessage(content="Failed to extract registration metadata from previous steps.")]}
+            
+            # Get the original image description for context
+            original_description = ""
+            for message in state["messages"]:
+                if isinstance(message, HumanMessage) and "Generate" in message.content:
+                    original_description = message.content
+                    break
+            
+            # Create a prompt for negotiation
+            negotiation_prompt = """
+You are a helpful IP licensing assistant. You need to negotiate fair terms for this digital artwork.
+
+For commercial revenue share:
+- Range is 0-100%
+- 0% means the creator gets no revenue from commercial use
+- 100% means the creator gets all revenue from commercial use
+- Typical range is 5-20% for most digital art
+- Higher quality, unique art can command 15-30%
+- Consider the uniqueness and quality of the artwork
+
+For derivatives allowed:
+- This is a yes/no decision
+- If yes, others can create derivative works
+- If no, the artwork cannot be modified
+- Most digital art allows derivatives with proper attribution
+- Consider if the artwork has unique elements worth protecting
+
+Your goal is to help the user understand these terms and reach a fair agreement.
+Start by explaining these options and suggesting reasonable defaults based on the artwork.
+            """
+            
+            # First message to explain terms and suggest defaults
+            initial_message = HumanMessage(
+                content=f"""
+The following artwork has been created and uploaded to IPFS:
+Description: {original_description}
+
+We need to set terms for this IP before minting:
+
+1. Commercial Revenue Share: What percentage of revenue should the creator receive when this IP is used commercially?
+2. Derivatives Allowed: Should others be allowed to create derivative works based on this IP?
+
+Please explain these options to the user and suggest reasonable defaults.
+                """
+            )
+            
+            # Get initial explanation from the LLM
+            explanation = await simple_model.ainvoke([
+                SystemMessage(content=negotiation_prompt),
+                initial_message
+            ])
+            
+            # Ask the user for their preferences
+            human_review = interrupt({
+                "question": "Please set the terms for your IP",
+                "explanation": explanation.content,
+                "fields": [
+                    {"name": "commercial_rev_share", "type": "slider", "min": 0, "max": 100, "default": 15, "label": "Commercial Revenue Share (%)"},
+                    {"name": "derivatives_allowed", "type": "boolean", "default": True, "label": "Allow Derivative Works"}
+                ]
+            })
+            
+            # Get the user's choices
+            commercial_rev_share = human_review.get("commercial_rev_share", 15)
+            derivatives_allowed = human_review.get("derivatives_allowed", True)
+            
+            # Validate the commercial_rev_share is within bounds
+            if not isinstance(commercial_rev_share, (int, float)) or commercial_rev_share < 0 or commercial_rev_share > 100:
+                commercial_rev_share = 15  # Default to 15% if invalid
+            
+            # Check if the user's choices might need feedback
+            feedback_needed = False
+            
+            # Prepare a message for the LLM to evaluate the user's choices
+            evaluation_message = HumanMessage(
+                content=f"""
+The user has selected the following terms for their digital artwork:
+- Commercial Revenue Share: {commercial_rev_share}%
+- Derivatives Allowed: {"Yes" if derivatives_allowed else "No"}
+
+Original artwork description: {original_description}
+
+Are these terms reasonable? If not, please provide specific feedback on why they might not be optimal 
+and what you would recommend instead. Be honest but tactful.
+
+For commercial revenue share:
+- If it's very low (0-5%), suggest they might be undervaluing their work
+- If it's very high (>50%), explain that this might discourage commercial use
+- If it's extremely high (>80%), strongly advise that this could prevent any commercial adoption
+
+For derivatives:
+- If they've disallowed derivatives, explain the potential benefits of allowing them
+- If they've allowed derivatives but the artwork is highly unique, mention they might want to consider restrictions
+
+Only suggest changes if the terms are significantly outside reasonable ranges.
+                """
+            )
+            
+            # Get evaluation from the LLM
+            evaluation = await simple_model.ainvoke([
+                SystemMessage(content=negotiation_prompt),
+                evaluation_message
+            ])
+            
+            # Check if the LLM suggests changes
+            suggests_changes = any(phrase in evaluation.content.lower() for phrase in 
+                                  ["suggest", "recommend", "consider", "might want to", "would be better", 
+                                   "too high", "too low", "instead", "rather than", "adjust"])
+            
+            if suggests_changes:
+                # Ask the user if they want to adjust their terms
+                feedback_review = interrupt({
+                    "question": "The AI has some feedback on your chosen terms",
+                    "explanation": evaluation.content,
+                    "fields": [
+                        {"name": "adjust_terms", "type": "boolean", "default": True, "label": "Would you like to adjust your terms?"}
+                    ]
+                })
+                
+                if feedback_review.get("adjust_terms", True):
+                    # Ask for new terms
+                    new_terms_review = interrupt({
+                        "question": "Please adjust your terms",
+                        "explanation": "Based on the feedback, you can modify your terms below:",
+                        "fields": [
+                            {"name": "commercial_rev_share", "type": "slider", "min": 0, "max": 100, "default": commercial_rev_share, "label": "Commercial Revenue Share (%)"},
+                            {"name": "derivatives_allowed", "type": "boolean", "default": derivatives_allowed, "label": "Allow Derivative Works"}
+                        ]
+                    })
+                    
+                    # Update with new terms
+                    commercial_rev_share = new_terms_review.get("commercial_rev_share", commercial_rev_share)
+                    derivatives_allowed = new_terms_review.get("derivatives_allowed", derivatives_allowed)
+                    
+                    # Validate again
+                    if not isinstance(commercial_rev_share, (int, float)) or commercial_rev_share < 0 or commercial_rev_share > 100:
+                        commercial_rev_share = 15  # Default to 15% if invalid
+            
+            # Store the negotiated terms and registration metadata for the next node
+            return {
+                "messages": [AIMessage(
+                    content=f"""
+Terms have been set for this IP:
+- Commercial Revenue Share: {commercial_rev_share}%
+- Derivatives Allowed: {"Yes" if derivatives_allowed else "No"}
+
+Registration metadata is ready for minting.
+                    """,
+                    additional_kwargs={
+                        "terms_data": {
+                            "commercial_rev_share": commercial_rev_share,
+                            "derivatives_allowed": derivatives_allowed,
+                            "registration_metadata": registration_metadata
+                        }
+                    }
+                )]
+            }
+
+    class MintRegisterIP:
+        async def ainvoke(self, state, config=None):
+            print("Minting and registering IP with terms...")
+            
+            # Get the terms data from the previous message
+            terms_data = None
+            for message in reversed(state["messages"]):
+                if isinstance(message, AIMessage) and hasattr(message, "additional_kwargs") and "terms_data" in message.additional_kwargs:
+                    terms_data = message.additional_kwargs["terms_data"]
+                    break
+            
+            if not terms_data:
+                return {"messages": [AIMessage(content="Failed to extract terms data from previous steps.")]}
+            
+            try:
+                # Extract the parameters
+                commercial_rev_share = terms_data["commercial_rev_share"]
+                derivatives_allowed = terms_data["derivatives_allowed"]
+                registration_metadata = terms_data["registration_metadata"]
+                
+                print(f"Calling mint_and_register_ip_with_terms with: commercial_rev_share={commercial_rev_share}, derivatives_allowed={derivatives_allowed}, registration_metadata={registration_metadata}")
+                
+                # Call the mint_and_register_ip_with_terms tool
+                result = await mint_register_ip_tool.ainvoke({
+                    "commercial_rev_share": commercial_rev_share,
+                    "derivatives_allowed": derivatives_allowed,
+                    "registration_metadata": registration_metadata
+                })
+                
+                print(f"Mint and register IP result: {result}")
+                
+                # Parse the result to extract IP ID and license terms IDs for the next step
+                import re
+                
+                ip_id = None
+                license_terms_ids = []
+                
+                # Extract IP ID
+                ip_id_match = re.search(r'IP ID: (0x[a-fA-F0-9]+)', result)
+                if ip_id_match:
+                    ip_id = ip_id_match.group(1)
+                
+                # Extract License Terms IDs
+                license_terms_match = re.search(r'License Terms IDs: \[(.*?)\]', result)
+                if license_terms_match:
+                    terms_str = license_terms_match.group(1)
+                    # Parse the comma-separated list
+                    if terms_str:
+                        license_terms_ids = [int(term.strip()) for term in terms_str.split(',') if term.strip().isdigit()]
+                
+                return {
+                    "messages": [ToolMessage(
+                        content=result,
+                        name="mint_and_register_ip_with_terms",
+                        tool_call_id=str(uuid.uuid4()),
+                        additional_kwargs={
+                            "minting_data": {
+                                "ip_id": ip_id,
+                                "license_terms_ids": license_terms_ids
+                            }
+                        }
+                    )]
+                }
+                
+            except Exception as e:
+                print(f"Error minting and registering IP: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    "messages": [ToolMessage(
+                        content=f"Error minting and registering IP: {str(e)}",
+                        name="mint_and_register_ip_with_terms",
+                        tool_call_id=str(uuid.uuid4())
+                    )]
+                }
+
+    class MintLicenseTokens:
+        async def ainvoke(self, state, config=None):
+            print("Minting license tokens...")
+            
+            # Get the minting data from the previous message
+            minting_data = None
+            for message in reversed(state["messages"]):
+                if isinstance(message, ToolMessage) and hasattr(message, "additional_kwargs") and "minting_data" in message.additional_kwargs:
+                    minting_data = message.additional_kwargs["minting_data"]
+                    break
+            
+            if not minting_data or not minting_data.get("ip_id") or not minting_data.get("license_terms_ids"):
+                return {"messages": [AIMessage(content="Failed to extract IP ID or license terms IDs from previous steps.")]}
+            
+            try:
+                # Extract the parameters
+                ip_id = minting_data["ip_id"]
+                license_terms_id = minting_data["license_terms_ids"][0] if minting_data["license_terms_ids"] else None
+                
+                if not license_terms_id:
+                    return {"messages": [AIMessage(content="No license terms ID available for minting license tokens.")]}
+                
+                print(f"Calling mint_license_tokens with: licensor_ip_id={ip_id}, license_terms_id={license_terms_id}")
+                
+                # Call the mint_license_tokens tool
+                result = await mint_license_tokens_tool.ainvoke({
+                    "licensor_ip_id": ip_id,
+                    "license_terms_id": license_terms_id
+                })
+                
+                print(f"Mint license tokens result: {result}")
+                
+                return {
+                    "messages": [ToolMessage(
+                        content=result,
+                        name="mint_license_tokens",
+                        tool_call_id=str(uuid.uuid4())
+                    )]
+                }
+                
+            except Exception as e:
+                print(f"Error minting license tokens: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    "messages": [ToolMessage(
+                        content=f"Error minting license tokens: {str(e)}",
+                        name="mint_license_tokens",
+                        tool_call_id=str(uuid.uuid4())
+                    )]
+                }
+
     workflow = StateGraph(State)
     
     workflow.add_node("call_llm", RunnableLambda(CallLLM().ainvoke))
@@ -375,6 +689,9 @@ Format your response exactly like this:
     workflow.add_node("human_review_node", RunnableLambda(human_review_node))
     workflow.add_node("generate_metadata", RunnableLambda(GenerateMetadata().ainvoke))
     workflow.add_node("create_metadata", RunnableLambda(CreateMetadata().ainvoke))
+    workflow.add_node("negotiate_terms", RunnableLambda(NegotiateTerms().ainvoke))
+    workflow.add_node("mint_register_ip", RunnableLambda(MintRegisterIP().ainvoke))
+    workflow.add_node("mint_license_tokens", RunnableLambda(MintLicenseTokens().ainvoke))
     
     # Start -> call LLM to generate image
     workflow.add_edge(START, "call_llm")
@@ -404,8 +721,17 @@ Format your response exactly like this:
     # Generate metadata -> create metadata
     workflow.add_edge("generate_metadata", "create_metadata")
     
-    # Create metadata -> END
-    workflow.add_edge("create_metadata", END)
+    # Create metadata -> negotiate terms
+    workflow.add_edge("create_metadata", "negotiate_terms")
+    
+    # Negotiate terms -> mint and register IP
+    workflow.add_edge("negotiate_terms", "mint_register_ip")
+    
+    # Mint and register IP -> mint license tokens
+    workflow.add_edge("mint_register_ip", "mint_license_tokens")
+    
+    # Mint license tokens -> END
+    workflow.add_edge("mint_license_tokens", END)
 
     # Set up memory
     memory = MemorySaver()
@@ -429,9 +755,9 @@ async def run_agent():
             command="python",
             args=["/Users/sarickshah/Documents/story/story-sdk-mcp/server.py"],
         )
-        # Get BOTH IPFS tools
+        # Get all required tools
         ipfs_tools = [tool for tool in client.get_tools() 
-                      if tool.name in ["upload_image_to_ipfs", "create_ip_metadata"]]
+                      if tool.name in ["upload_image_to_ipfs", "create_ip_metadata", "mint_and_register_ip_with_terms", "mint_license_tokens"]]
         
         # Create the graph with the tools
         graph = create_graph(ipfs_tools)
@@ -447,73 +773,136 @@ async def run_agent():
         # Add thread_id to the config
         config = {"configurable": {"thread_id": thread_id}}
         
-        # Use astream for async operation
-        async for event in graph.astream(initial_input, config, stream_mode="updates"):
-            print(event)
-            print("\n")
-            
-            # Check if we hit an interrupt
-            if "__interrupt__" in event:
-                # Get user input
-                user_input = input("Do you like this image? (yes/no + feedback): ")
+        # Process all events and handle interrupts at any stage
+        async def process_events(input_data):
+            async for event in graph.astream(input_data, config, stream_mode="updates"):
+                print(event)
+                print("\n")
                 
-                if user_input.lower().startswith('yes'):
-                    # Continue to IPFS upload
-                    async for event in graph.astream(
-                        Command(resume={"action": "continue"}),
-                        config,
-                        stream_mode="updates"
-                    ):
-                        print(event)
-                        print("\n")
+                # Check if we hit an interrupt
+                if "__interrupt__" in event:
+                    interrupt_data = event["__interrupt__"][0].value
+                    
+                    # Check which type of interrupt we're dealing with
+                    if "image_url" in interrupt_data:
+                        # This is the image review interrupt
+                        user_input = input("Do you like this image? (yes/no + feedback): ")
                         
-                        # Check if we need to handle another interrupt
-                        if "__interrupt__" in event:
-                            break
-                else:
-                    # Get feedback after "no"
-                    feedback = user_input[4:] if len(user_input) > 4 else "Please generate a different image"
-                    async for next_event in graph.astream(
-                        Command(
-                            resume={
-                                "action": "feedback",
-                                "data": feedback
-                            }
-                        ),
-                        config,
-                        stream_mode="updates"
-                    ):
-                        print(next_event)
-                        print("\n")
-                        
-                        # Handle interrupts recursively for subsequent image reviews
-                        if "__interrupt__" in next_event:
-                            user_input = input("Do you like this image? (yes/no + feedback): ")
+                        if user_input.lower().startswith('yes'):
+                            # Continue to IPFS upload
+                            await process_events(Command(resume={"action": "continue"}))
+                        else:
+                            # Get feedback after "no"
+                            feedback = user_input[4:] if len(user_input) > 4 else "Please generate a different image"
+                            await process_events(
+                                Command(
+                                    resume={
+                                        "action": "feedback",
+                                        "data": feedback
+                                    }
+                                )
+                            )
+                    
+                    elif "fields" in interrupt_data:
+                        # Check if this is the terms negotiation interrupt
+                        if "commercial_rev_share" in [field["name"] for field in interrupt_data.get("fields", [])]:
+                            # This is the initial terms negotiation interrupt
+                            print("\n" + interrupt_data.get("explanation", ""))
                             
-                            if user_input.lower().startswith('yes'):
-                                # Continue to IPFS upload
-                                async for final_event in graph.astream(
-                                    Command(resume={"action": "continue"}),
-                                    config,
-                                    stream_mode="updates"
-                                ):
-                                    print(final_event)
-                                    print("\n")
-                            else:
-                                # Get feedback after "no"
-                                feedback = user_input[4:] if len(user_input) > 4 else "Please generate a different image"
-                                async for _ in graph.astream(
-                                    Command(
-                                        resume={
-                                            "action": "feedback",
-                                            "data": feedback
-                                        }
-                                    ),
-                                    config,
-                                    stream_mode="updates"
-                                ):
-                                    # Continue the loop for more iterations if needed
-                                    pass
+                            # Get commercial revenue share
+                            while True:
+                                try:
+                                    rev_share = int(input(f"Enter Commercial Revenue Share (0-100%, default: 15%): ") or "15")
+                                    if 0 <= rev_share <= 100:
+                                        break
+                                    print("Please enter a value between 0 and 100.")
+                                except ValueError:
+                                    print("Please enter a valid number.")
+                            
+                            # Get derivatives allowed
+                            while True:
+                                deriv_input = input("Allow Derivative Works? (yes/no, default: yes): ").lower() or "yes"
+                                if deriv_input in ["yes", "no", "y", "n"]:
+                                    derivatives_allowed = deriv_input.startswith("y")
+                                    break
+                                print("Please enter yes or no.")
+                            
+                            # Resume with the user's choices
+                            await process_events(
+                                Command(
+                                    resume={
+                                        "commercial_rev_share": rev_share,
+                                        "derivatives_allowed": derivatives_allowed
+                                    }
+                                )
+                            )
+                        
+                        # Check if this is the feedback on terms interrupt
+                        elif "adjust_terms" in [field["name"] for field in interrupt_data.get("fields", [])]:
+                            # This is the feedback on terms interrupt
+                            print("\n" + interrupt_data.get("explanation", ""))
+                            
+                            # Ask if user wants to adjust terms
+                            adjust_input = input("Would you like to adjust your terms based on this feedback? (yes/no, default: yes): ").lower() or "yes"
+                            adjust_terms = adjust_input.startswith("y")
+                            
+                            # Resume with the user's choice
+                            await process_events(
+                                Command(
+                                    resume={
+                                        "adjust_terms": adjust_terms
+                                    }
+                                )
+                            )
+                        
+                        else:
+                            # Generic fields handler
+                            print("Please provide the requested information:")
+                            responses = {}
+                            
+                            for field in interrupt_data.get("fields", []):
+                                field_name = field.get("name", "")
+                                field_type = field.get("type", "text")
+                                field_default = field.get("default", "")
+                                field_label = field.get("label", field_name)
+                                
+                                if field_type == "boolean":
+                                    while True:
+                                        value_input = input(f"{field_label}? (yes/no, default: {'yes' if field_default else 'no'}): ").lower() or ("yes" if field_default else "no")
+                                        if value_input in ["yes", "no", "y", "n"]:
+                                            responses[field_name] = value_input.startswith("y")
+                                            break
+                                        print("Please enter yes or no.")
+                                
+                                elif field_type == "slider":
+                                    min_val = field.get("min", 0)
+                                    max_val = field.get("max", 100)
+                                    while True:
+                                        try:
+                                            value_input = input(f"{field_label} ({min_val}-{max_val}, default: {field_default}): ") or str(field_default)
+                                            value = int(value_input)
+                                            if min_val <= value <= max_val:
+                                                responses[field_name] = value
+                                                break
+                                            print(f"Please enter a value between {min_val} and {max_val}.")
+                                        except ValueError:
+                                            print("Please enter a valid number.")
+                                
+                                else:  # text or other types
+                                    value_input = input(f"{field_label} (default: {field_default}): ") or str(field_default)
+                                    responses[field_name] = value_input
+                            
+                            # Resume with all responses
+                            await process_events(Command(resume=responses))
+                    
+                    else:
+                        # Generic interrupt handler for any other interrupts
+                        print("Received interrupt:", interrupt_data)
+                        user_input = input("Enter your response: ")
+                        await process_events(Command(resume={"data": user_input}))
+        
+        # Start the initial processing
+        await process_events(initial_input)
 
 if __name__ == "__main__":
     import asyncio
