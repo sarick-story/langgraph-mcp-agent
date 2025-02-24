@@ -1,0 +1,15 @@
+[project]
+name = "langgraph-mcp-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain-anthropic>=0.3.7",
+    "langchain-community>=0.3.18",
+    "langchain-mcp-adapters>=0.0.2",
+    "langchain-openai>=0.3.6",
+    "langgraph>=0.2.74",
+    "loguru>=0.7.3",
+    "web3>=7.8.0",
+]
