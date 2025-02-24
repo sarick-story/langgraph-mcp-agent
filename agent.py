@@ -584,6 +584,19 @@ Registration metadata is ready for minting.
                 
                 print(f"Mint and register IP result: {result}")
                 
+                # Check if there was an error related to derivatives
+                if "Cannot add derivative attribution when derivative use is disabled" in result:
+                    print("Error with derivatives settings. Retrying with derivatives allowed...")
+                    
+                    # Retry with derivatives allowed
+                    result = await mint_register_ip_tool.ainvoke({
+                        "commercial_rev_share": commercial_rev_share,
+                        "derivatives_allowed": True,  # Force derivatives to be allowed
+                        "registration_metadata": registration_metadata
+                    })
+                    
+                    print(f"Retry mint and register IP result: {result}")
+                
                 # Parse the result to extract IP ID and license terms IDs for the next step
                 import re
                 
@@ -602,6 +615,30 @@ Registration metadata is ready for minting.
                     # Parse the comma-separated list
                     if terms_str:
                         license_terms_ids = [int(term.strip()) for term in terms_str.split(',') if term.strip().isdigit()]
+                
+                # If we still don't have an IP ID, the minting failed
+                if not ip_id:
+                    # Try one more time with more reasonable defaults
+                    print("Minting failed. Trying again with recommended defaults...")
+                    result = await mint_register_ip_tool.ainvoke({
+                        "commercial_rev_share": 15,  # Use a reasonable default
+                        "derivatives_allowed": True,  # Allow derivatives
+                        "registration_metadata": registration_metadata
+                    })
+                    
+                    print(f"Default parameters mint result: {result}")
+                    
+                    # Extract IP ID again
+                    ip_id_match = re.search(r'IP ID: (0x[a-fA-F0-9]+)', result)
+                    if ip_id_match:
+                        ip_id = ip_id_match.group(1)
+                    
+                    # Extract License Terms IDs again
+                    license_terms_match = re.search(r'License Terms IDs: \[(.*?)\]', result)
+                    if license_terms_match:
+                        terms_str = license_terms_match.group(1)
+                        if terms_str:
+                            license_terms_ids = [int(term.strip()) for term in terms_str.split(',') if term.strip().isdigit()]
                 
                 return {
                     "messages": [ToolMessage(
@@ -843,14 +880,52 @@ async def run_agent():
                             print("\n" + interrupt_data.get("explanation", ""))
                             
                             # Ask if user wants to adjust terms
-                            adjust_input = input("Would you like to adjust your terms based on this feedback? (yes/no, default: yes): ").lower() or "yes"
-                            adjust_terms = adjust_input.startswith("y")
+                            while True:
+                                adjust_input = input("Would you like to adjust your terms based on this feedback? (yes/no, default: yes): ").lower()
+                                if adjust_input in ["yes", "no", "y", "n", ""]:  # Empty string for default
+                                    adjust_terms = not (adjust_input.startswith("n"))  # Default to yes
+                                    break
+                                print("Please enter yes or no.")
                             
                             # Resume with the user's choice
                             await process_events(
                                 Command(
                                     resume={
                                         "adjust_terms": adjust_terms
+                                    }
+                                )
+                            )
+                        
+                        # Check if this is the term adjustment interrupt
+                        elif len(interrupt_data.get("fields", [])) == 2 and "commercial_rev_share" in [field["name"] for field in interrupt_data.get("fields", [])] and "derivatives_allowed" in [field["name"] for field in interrupt_data.get("fields", [])]:
+                            # This is the term adjustment interrupt
+                            print("\n" + interrupt_data.get("explanation", ""))
+                            
+                            # Get commercial revenue share
+                            while True:
+                                try:
+                                    rev_share = int(input(f"Enter Commercial Revenue Share (0-100%, default: {interrupt_data['fields'][0].get('default', 15)}%): ") or str(interrupt_data['fields'][0].get('default', 15)))
+                                    if 0 <= rev_share <= 100:
+                                        break
+                                    print("Please enter a value between 0 and 100.")
+                                except ValueError:
+                                    print("Please enter a valid number.")
+                            
+                            # Get derivatives allowed
+                            while True:
+                                default_deriv = "yes" if interrupt_data['fields'][1].get('default', True) else "no"
+                                deriv_input = input(f"Allow Derivative Works? (yes/no, default: {default_deriv}): ").lower() or default_deriv
+                                if deriv_input in ["yes", "no", "y", "n"]:
+                                    derivatives_allowed = deriv_input.startswith("y")
+                                    break
+                                print("Please enter yes or no.")
+                            
+                            # Resume with the user's choices
+                            await process_events(
+                                Command(
+                                    resume={
+                                        "commercial_rev_share": rev_share,
+                                        "derivatives_allowed": derivatives_allowed
                                     }
                                 )
                             )
