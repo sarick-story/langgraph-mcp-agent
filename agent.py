@@ -81,22 +81,37 @@ def create_graph(ipfs_tools):
             last_message = state["messages"][-1]
             
             for tool_call in last_message.tool_calls:
-                print(f"Executing tool: {tool_call['name']}")
-                tool = tools[tool_call['name']]
-                
-                # Extract just the string value for image_data if that's the parameter
-                if tool_call['name'] == 'upload_image_to_ipfs' and 'image_data' in tool_call['args']:
-                    # Make sure we're passing just the URL string, not a complex object
-                    image_url = tool_call['args']['image_data']
-                    result = await tool.ainvoke({"image_data": image_url})
-                else:
-                    result = await tool.ainvoke(tool_call['args'])
-                
-                new_messages.append(ToolMessage(
-                    content=result,
-                    name=tool_call['name'],
-                    tool_call_id=tool_call['id'],
-                ))
+                try:
+                    print(f"Executing tool: {tool_call['name']}")
+                    tool = tools[tool_call['name']]
+                    
+                    # Extract just the string value for image_data if that's the parameter
+                    if tool_call['name'] == 'upload_image_to_ipfs' and 'image_data' in tool_call['args']:
+                        # Make sure we're passing just the URL string, not a complex object
+                        image_url = tool_call['args']['image_data']
+                        result = await tool.ainvoke({"image_data": image_url})
+                        print(f"IPFS upload result: {result}")
+                    else:
+                        result = await tool.ainvoke(tool_call['args'])
+                    
+                    # Make sure result is a string
+                    if not isinstance(result, str):
+                        result = str(result)
+                    
+                    new_messages.append(ToolMessage(
+                        content=result,
+                        name=tool_call['name'],
+                        tool_call_id=tool_call['id'],
+                    ))
+                    
+                except Exception as e:
+                    print(f"Error executing tool {tool_call['name']}: {str(e)}")
+                    new_messages.append(ToolMessage(
+                        content=f"Error executing tool: {str(e)}",
+                        name=tool_call['name'],
+                        tool_call_id=tool_call['id'],
+                    ))
+                    
             return {"messages": new_messages}
 
     def human_review_node(state):
@@ -113,59 +128,61 @@ def create_graph(ipfs_tools):
         })
 
         if human_review["action"] == "continue":
-            return Command(goto="run_tool", update={
+            # If yes, create a tool call to upload to IPFS
+            return {
                 "messages": [AIMessage(
                     content="Uploading approved image to IPFS",
                     tool_calls=[{
                         "id": str(uuid.uuid4()),
                         "name": "upload_image_to_ipfs",
-                        "args": {"image_data": image_url}  # Match the server.py parameter name
+                        "args": {"image_data": image_url}
                     }]
-                )]
-            })
-        elif human_review["action"] == "feedback":
-            return Command(goto="call_llm", update={
-                "messages": [ToolMessage(
-                    content=human_review["data"],
-                    name="generate_image",
-                    tool_call_id=last_message.tool_call_id
-                )]
-            })
-
-    def should_end(state):
-        """Decide whether to continue to LLM or end the conversation."""
-        last_message = state["messages"][-1]
-        
-        # If the last message is a tool message from IPFS upload, end the conversation
-        if isinstance(last_message, ToolMessage) and last_message.name == "upload_image_to_ipfs":
-            return "end"
-        # Otherwise go back to the LLM
-        return "call_llm"
+                )],
+                "next": "run_ipfs_tool"
+            }
+        else:
+            # If no, send feedback to LLM to regenerate
+            return {
+                "messages": [HumanMessage(
+                    content=f"I don't like that image. {human_review.get('data', 'Please generate a different image.')}"
+                )],
+                "next": "call_llm"
+            }
 
     workflow = StateGraph(State)
     
     workflow.add_node("call_llm", RunnableLambda(CallLLM().ainvoke))
     workflow.add_node("run_tool", RunnableLambda(RunTool().ainvoke))
+    workflow.add_node("run_ipfs_tool", RunnableLambda(RunTool().ainvoke))
     workflow.add_node("human_review_node", RunnableLambda(human_review_node))
     
+    # Start -> call LLM to generate image
     workflow.add_edge(START, "call_llm")
+    
+    # LLM -> run tool (for image generation)
     workflow.add_conditional_edges(
         "call_llm",
-        lambda x: "run_tool" if len(x["messages"][-1].tool_calls) > 0 else END
+        lambda x: "run_tool" if (x["messages"] and len(x["messages"][-1].tool_calls) > 0) else END
     )
-    workflow.add_edge("run_tool", "human_review_node")
-    workflow.add_edge("human_review_node", "run_tool")
-    workflow.add_edge("human_review_node", "call_llm")
     
-    # Add conditional edge after run_tool for the IPFS upload result
+    # Run tool -> human review (after image generation)
     workflow.add_conditional_edges(
         "run_tool",
-        should_end,
-        {
-            "call_llm": "call_llm",
-            "end": END
-        }
+        lambda x: "human_review_node" if (
+            x["messages"] and 
+            isinstance(x["messages"][-1], ToolMessage) and 
+            x["messages"][-1].name == "generate_image"
+        ) else "call_llm"
     )
+    
+    # Human review -> either run IPFS tool or call LLM again based on response
+    workflow.add_conditional_edges(
+        "human_review_node",
+        lambda x: x.get("next", "call_llm")
+    )
+    
+    # IPFS tool -> END (always end after IPFS upload)
+    workflow.add_edge("run_ipfs_tool", END)
 
     # Set up memory
     memory = MemorySaver()
@@ -225,8 +242,6 @@ async def run_agent():
                     ):
                         print(event)
                         print("\n")
-                        if "__interrupt__" in event:
-                            break
                 else:
                     # Get feedback after "no"
                     feedback = user_input[4:] if len(user_input) > 4 else "Please generate a different image"
