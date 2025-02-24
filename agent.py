@@ -127,7 +127,7 @@ def create_graph(ipfs_tools):
             "image_url": image_url
         })
 
-        if human_review["action"] == "continue":
+        if human_review.get("action") == "continue":
             # If yes, create a tool call to upload to IPFS
             return {
                 "messages": [AIMessage(
@@ -242,10 +242,14 @@ async def run_agent():
                     ):
                         print(event)
                         print("\n")
+                        
+                        # Check if we need to handle another interrupt
+                        if "__interrupt__" in event:
+                            break
                 else:
                     # Get feedback after "no"
                     feedback = user_input[4:] if len(user_input) > 4 else "Please generate a different image"
-                    async for event in graph.astream(
+                    async for next_event in graph.astream(
                         Command(
                             resume={
                                 "action": "feedback",
@@ -255,10 +259,37 @@ async def run_agent():
                         config,
                         stream_mode="updates"
                     ):
-                        print(event)
+                        print(next_event)
                         print("\n")
-                        if "__interrupt__" in event:
-                            break
+                        
+                        # Handle interrupts recursively for subsequent image reviews
+                        if "__interrupt__" in next_event:
+                            user_input = input("Do you like this image? (yes/no + feedback): ")
+                            
+                            if user_input.lower().startswith('yes'):
+                                # Continue to IPFS upload
+                                async for final_event in graph.astream(
+                                    Command(resume={"action": "continue"}),
+                                    config,
+                                    stream_mode="updates"
+                                ):
+                                    print(final_event)
+                                    print("\n")
+                            else:
+                                # Get feedback after "no"
+                                feedback = user_input[4:] if len(user_input) > 4 else "Please generate a different image"
+                                async for _ in graph.astream(
+                                    Command(
+                                        resume={
+                                            "action": "feedback",
+                                            "data": feedback
+                                        }
+                                    ),
+                                    config,
+                                    stream_mode="updates"
+                                ):
+                                    # Continue the loop for more iterations if needed
+                                    pass
 
 if __name__ == "__main__":
     import asyncio
