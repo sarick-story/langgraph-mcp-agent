@@ -28,11 +28,9 @@ SYSTEM_PROMPT = """Generate an image based on the user's request."""
 @tool
 @traceable(name="DALL-E Image Generation")
 def generate_image(prompt: str) -> str:
-    """Generate an image using DALL-E based on the prompt."""
-    logger.info(f"Generating image with prompt: {prompt}")
-    dalle = DallEAPIWrapper()
+    """Generate an image using DALL-E 3 based on the prompt."""
+    dalle = DallEAPIWrapper(model="dall-e-3")
     image_url = dalle.run(prompt)
-    logger.info(f"Generated image URL: {image_url}")
     return f"Generated image URL: {image_url}"
 
 # Create human feedback tool
@@ -90,19 +88,16 @@ def create_graph(ipfs_tools):
         async def ainvoke(self, state, config=None):
             messages = state["messages"]
             response = await model.ainvoke(messages)
-            print(f"LLM Response: {response}")
             return {"messages": [response]}
 
     class RunTool:
         async def ainvoke(self, state, config=None):
-            print("Running tool...")
             new_messages = []
             tools = {"generate_image": generate_image, "upload_image_to_ipfs": upload_to_ipfs_tool}
             last_message = state["messages"][-1]
             
             for tool_call in last_message.tool_calls:
                 try:
-                    print(f"Executing tool: {tool_call['name']}")
                     tool = tools[tool_call['name']]
                     
                     # Extract just the string value for image_data if that's the parameter
@@ -110,7 +105,6 @@ def create_graph(ipfs_tools):
                         # Make sure we're passing just the URL string, not a complex object
                         image_url = tool_call['args']['image_data']
                         result = await tool.ainvoke({"image_data": image_url})
-                        print(f"IPFS upload result: {result}")
                     else:
                         result = await tool.ainvoke(tool_call['args'])
                     
@@ -125,13 +119,12 @@ def create_graph(ipfs_tools):
                     ))
                     
                 except Exception as e:
-                    print(f"Error executing tool {tool_call['name']}: {str(e)}")
                     new_messages.append(ToolMessage(
                         content=f"Error executing tool: {str(e)}",
                         name=tool_call['name'],
                         tool_call_id=tool_call['id'],
                     ))
-                    
+            
             return {"messages": new_messages}
 
     class RunIPFSTool:
@@ -378,7 +371,17 @@ Format your response exactly like this:
 
     class NegotiateTerms:
         async def ainvoke(self, state, config=None):
-            print("Starting terms negotiation...")
+            # Check if this is the first negotiation or a subsequent one
+            is_first_negotiation = True
+            for message in state["messages"]:
+                if isinstance(message, AIMessage) and "Terms have been set for this IP:" in message.content:
+                    is_first_negotiation = False
+                    break
+            
+            if is_first_negotiation:
+                print("Starting terms negotiation...")
+            else:
+                print("Deliberating...")
             
             # Get the registration metadata from the previous message
             registration_metadata = None
@@ -499,39 +502,63 @@ Only suggest changes if the terms are significantly outside reasonable ranges.
                 evaluation_message
             ])
             
-            # Check if the LLM suggests changes
-            suggests_changes = any(phrase in evaluation.content.lower() for phrase in 
-                                  ["suggest", "recommend", "consider", "might want to", "would be better", 
-                                   "too high", "too low", "instead", "rather than", "adjust"])
+            # Check if the LLM suggests changes - only if terms are outside reasonable ranges
+            suggests_changes = False
             
-            if suggests_changes:
-                # Ask the user if they want to adjust their terms
-                feedback_review = interrupt({
-                    "question": "The AI has some feedback on your chosen terms",
-                    "explanation": evaluation.content,
+            # For commercial revenue share, only suggest changes if outside 5-30% range
+            if commercial_rev_share < 5 or commercial_rev_share > 50:
+                suggests_changes = True
+            
+            # If the terms are reasonable, skip the feedback step
+            if not suggests_changes:
+                # Store the negotiated terms and registration metadata for the next node
+                return {
+                    "messages": [AIMessage(
+                        content=f"""
+Terms have been set for this IP:
+- Commercial Revenue Share: {commercial_rev_share}%
+- Derivatives Allowed: {"Yes" if derivatives_allowed else "No"}
+
+Registration metadata is ready for minting.
+                        """,
+                        additional_kwargs={
+                            "terms_data": {
+                                "commercial_rev_share": commercial_rev_share,
+                                "derivatives_allowed": derivatives_allowed,
+                                "registration_metadata": registration_metadata
+                            }
+                        }
+                    )]
+                }
+            
+            # Only ask for feedback if the terms are outside reasonable ranges
+            feedback_review = interrupt({
+                "question": "The AI has some feedback on your chosen terms",
+                "explanation": evaluation.content,
+                "fields": [
+                    {"name": "adjust_terms", "type": "boolean", "default": True, "label": "Would you like to adjust your terms?"}
+                ]
+            })
+            
+            if feedback_review.get("adjust_terms", True):
+                # Ask for new terms
+                print("Deliberating...")
+                new_terms_review = interrupt({
+                    "question": "Please adjust your terms",
+                    "explanation": "Based on the feedback, you can modify your terms below:",
                     "fields": [
-                        {"name": "adjust_terms", "type": "boolean", "default": True, "label": "Would you like to adjust your terms?"}
+                        {"name": "commercial_rev_share", "type": "slider", "min": 0, "max": 100, "default": commercial_rev_share, "label": "Commercial Revenue Share (%)"},
+                        {"name": "derivatives_allowed", "type": "boolean", "default": derivatives_allowed, "label": "Allow Derivative Works"}
                     ]
                 })
                 
-                if feedback_review.get("adjust_terms", True):
-                    # Ask for new terms
-                    new_terms_review = interrupt({
-                        "question": "Please adjust your terms",
-                        "explanation": "Based on the feedback, you can modify your terms below:",
-                        "fields": [
-                            {"name": "commercial_rev_share", "type": "slider", "min": 0, "max": 100, "default": commercial_rev_share, "label": "Commercial Revenue Share (%)"},
-                            {"name": "derivatives_allowed", "type": "boolean", "default": derivatives_allowed, "label": "Allow Derivative Works"}
-                        ]
-                    })
-                    
-                    # Update with new terms
-                    commercial_rev_share = new_terms_review.get("commercial_rev_share", commercial_rev_share)
-                    derivatives_allowed = new_terms_review.get("derivatives_allowed", derivatives_allowed)
-                    
-                    # Validate again
-                    if not isinstance(commercial_rev_share, (int, float)) or commercial_rev_share < 0 or commercial_rev_share > 100:
-                        commercial_rev_share = 15  # Default to 15% if invalid
+                # Update with new terms
+                commercial_rev_share = new_terms_review.get("commercial_rev_share", commercial_rev_share)
+                derivatives_allowed = new_terms_review.get("derivatives_allowed", derivatives_allowed)
+                
+                # Validate again
+                if not isinstance(commercial_rev_share, (int, float)) or commercial_rev_share < 0 or commercial_rev_share > 100:
+                    commercial_rev_share = 15  # Default to 15% if invalid
             
             # Store the negotiated terms and registration metadata for the next node
             return {
@@ -801,22 +828,30 @@ async def run_agent():
         
         thread_id = str(uuid.uuid4())
         
+        # Prompt the user for what image they want to create
+        print("\n=== Story Protocol NFT Creator ===")
+        print("This tool will help you create and mint an image as an IP asset in the Story ecosystem.\n")
+        
+        image_prompt = input("What image would you like to create? (e.g., 'an anime style image of a person snowboarding'): ")
+        if not image_prompt:
+            image_prompt = "an anime style image of a person snowboarding"  # Default if empty
+            print(f"Using default prompt: '{image_prompt}'")
+        
         initial_input = {
             "messages": [
-                {"role": "user", "content": "Generate an anime style image of a person snowboarding"}
+                {"role": "user", "content": f"Generate {image_prompt}"}
             ]
         }
         
         # Add thread_id to the config
         config = {"configurable": {"thread_id": thread_id}}
         
+        print("\nStarting the creation process...\n")
+        
         # Process all events and handle interrupts at any stage
         async def process_events(input_data):
             async for event in graph.astream(input_data, config, stream_mode="updates"):
-                print(event)
-                print("\n")
-                
-                # Check if we hit an interrupt
+                # Only print user-facing messages, not technical details
                 if "__interrupt__" in event:
                     interrupt_data = event["__interrupt__"][0].value
                     
@@ -978,6 +1013,10 @@ async def run_agent():
         
         # Start the initial processing
         await process_events(initial_input)
+        
+        print("\n=== Process Complete ===")
+        print("Your NFT has been successfully created and registered with Story Protocol!")
+        print("Thank you for using the Story Protocol NFT Creator.")
 
 if __name__ == "__main__":
     import asyncio
