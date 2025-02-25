@@ -14,6 +14,10 @@ This agent helps users create AI-generated images, upload them to IPFS, and regi
 6. Minting and registering the IP on Story
 7. Minting license tokens for the IP
 
+
+![image](https://github.com/user-attachments/assets/31ffda62-2521-4b4d-90f8-5db1cc3f02ea)
+
+
 ## Requirements
 
 - Python 3.9+
