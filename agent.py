@@ -251,8 +251,8 @@ def create_graph(ipfs_tools):
                 content=f"""I've uploaded an image to IPFS with URI: {ipfs_uri}. 
                     The image was created based on this description: "{original_description}"
 
-                    Please generate metadata for this NFT with the following fields:
-                    1. Name: A creative name for this NFT
+                    Please generate metadata for this IP with the following fields:
+                    1. Name: A creative name for this IP
                     2. Description: A detailed description of what's in the image
                     3. Attributes: A list of traits in the exact format shown below:
 
@@ -1054,7 +1054,7 @@ async def run_agent():
         thread_id = str(uuid.uuid4())
 
         # Prompt the user for what image they want to create
-        print("\n=== Story Protocol NFT Creator ===")
+        print("\n=== Story IP Creator ===")
         print(
             "This tool will help you create and mint an image as an IP asset in the Story ecosystem.\n"
         )
@@ -1313,7 +1313,7 @@ async def run_agent():
 
         print("\n=== Process Complete ===")
         print(
-            "Your NFT has been successfully created and registered with Story Protocol!"
+            "Your IP has been successfully created and registered with Story!"
         )
         print("Thank you for using the Story IP Creation Agent.")
 

@@ -1,46 +1,18 @@
-# Story Protocol NFT Creator Agent
+# Story IP Creator Agent
 
-A LangGraph-based agent for creating, minting, and registering NFTs with Story Protocol.
+A LangGraph-based agent for creating, minting, and registering IP assets with Story.
 
 ## Overview
 
-This agent helps users create AI-generated images, upload them to IPFS, and register them as IP assets on the Story Protocol blockchain. The process includes:
+This agent helps users create AI-generated images, upload them to IPFS, and register them as IP assets on the Story blockchain. The process includes:
 
 1. Generating an image using DALL-E 3
 2. Getting user approval for the generated image
 3. Uploading the approved image to IPFS
-4. Creating IP metadata for the NFT
+4. Creating IP metadata for the IP asset
 5. Negotiating licensing terms with the user
-6. Minting and registering the IP on Story Protocol
+6. Minting and registering the IP on Story
 7. Minting license tokens for the IP
-
-## Project Structure
-
-```
-langgraph-mcp-agent/
-├── main.py                    # Main entry point
-├── config.py                  # Configuration and constants
-├── models/
-│   ├── __init__.py
-│   └── state.py               # State definitions
-├── tools/
-│   ├── __init__.py
-│   ├── image.py               # Image generation tools
-│   ├── feedback.py            # Human feedback tools
-│   └── ipfs.py                # IPFS tools wrapper
-├── nodes/
-│   ├── __init__.py
-│   ├── llm.py                 # LLM calling nodes
-│   ├── tools.py               # Tool execution nodes
-│   ├── review.py              # Human review nodes
-│   ├── metadata.py            # Metadata generation/creation
-│   ├── negotiation.py         # Terms negotiation
-│   └── minting.py             # IP minting and registration
-└── graph/
-    ├── __init__.py
-    ├── builder.py             # Graph construction
-    └── runtime.py             # Logic for running with interrupts
-```
 
 ## Requirements
 
@@ -48,52 +20,75 @@ langgraph-mcp-agent/
 - LangGraph
 - LangChain
 - OpenAI API key (for DALL-E and GPT models)
-- Story Protocol SDK
+- Story SDK
 
 ## Installation
 
-1. Clone the repository
-2. Install dependencies:
-    ```bash
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    uv sync
-    ```
-3. Set up environment variables:
+1. Install uv (Universal Versioner for Python):
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
+
+2. Clone the repository and navigate to the project directory
+
+3. Install dependencies using uv:
+   ```bash
+   uv sync
+   ```
+
+4. Set up environment variables:
+   ```bash
    cp .env.example .env
    ```
+   Then edit the `.env` file with your API keys and configuration.
 
 ## Usage
 
 Run the agent:
 
+```bash
+uv run agent.py
 ```
-python main.py
+
+The agent will guide you through an interactive process to:
+
+1. Enter an image description (e.g., "an anime style image of a person snowboarding")
+2. Review the generated image and approve or request a new one
+3. Set licensing terms including:
+   - Commercial Revenue Share percentage (0-100%)
+   - Whether to allow derivative works (yes/no)
+4. Complete the minting process on the Story blockchain
+
+### Example Workflow
+
+When you run `agent.py`, you'll experience a workflow like this:
+
+```
+=== Story IP Creator ===
+This tool will help you create and mint an image as an IP asset in the Story ecosystem.
+
+What image would you like to create? (e.g., 'an anime style image of a person snowboarding'): blob skateboarding
+
+Starting the creation process...
+
+[Image is generated and displayed]
+
+Do you like this image? (yes/no + feedback): yes
+Uploading image to IPFS...
+
+[Metadata is generated]
+
+Enter Commercial Revenue Share (0-100%, default: 15%): 20
+Allow Derivative Works? (yes/no, default: yes): yes
+
+[Minting and registration process]
+
+=== Process Complete ===
+Your IP has been successfully created and registered with Story!
 ```
 
-Follow the interactive prompts to:
-1. Enter an image description
-2. Review the generated image
-3. Set licensing terms
-4. Complete the minting process
-
-## Development
-
-### Adding New Nodes
-
-To add a new node to the workflow:
-
-1. Create a new class in the appropriate file in the `nodes/` directory
-2. Add the node to the graph in `graph/builder.py`
-3. Update the edges as needed
-
-### Adding New Tools
-
-To add a new tool:
-
-1. Add the tool function to the appropriate file in the `tools/` directory
-2. Update the tools dictionary in `graph/builder.py`
+The agent handles all the complex interactions with DALL-E for image generation, IPFS for storage, and the Story blockchain for minting and registration.
 
 ## License
 
-MIT 
+MIT
