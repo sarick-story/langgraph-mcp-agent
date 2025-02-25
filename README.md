@@ -67,11 +67,11 @@ When you run `agent.py`, you'll experience a workflow like this:
 === Story IP Creator ===
 This tool will help you create and mint an image as an IP asset in the Story ecosystem.
 
-What image would you like to create? (e.g., 'an anime style image of a person snowboarding'): blob skateboarding
+What image would you like to create? (e.g., 'an anime style image of a person snowboarding'): blob skateboarding on a mountaintop
 
 Starting the creation process...
 
-[Image is generated and displayed]
+[Image is generated and a link is given]
 
 Do you like this image? (yes/no + feedback): yes
 Uploading image to IPFS...
@@ -88,7 +88,3 @@ Your IP has been successfully created and registered with Story!
 ```
 
 The agent handles all the complex interactions with DALL-E for image generation, IPFS for storage, and the Story blockchain for minting and registration.
-
-## License
-
-MIT
