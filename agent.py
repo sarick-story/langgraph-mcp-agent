@@ -18,6 +18,7 @@ import uuid
 from langchain_core.runnables import RunnableLambda
 import os
 from dotenv import load_dotenv
+import json
 
 # Load environment variables from .env file
 load_dotenv()
@@ -148,6 +149,9 @@ def create_graph(ipfs_tools):
                     # Make sure result is a string
                     if not isinstance(result, str):
                         result = str(result)
+                    
+                    # Print the tool result
+                    print(f"\n--- {tool_call['name']} Tool Result ---\n{result}\n----------------------------")
 
                     new_messages.append(
                         ToolMessage(
@@ -188,6 +192,9 @@ def create_graph(ipfs_tools):
                     # Make sure result is a string
                     if not isinstance(result, str):
                         result = str(result)
+                    
+                    # Print the IPFS tool result
+                    print(f"\n--- IPFS Upload Tool Result ---\n{result}\n----------------------------")
 
                     new_messages.append(
                         ToolMessage(
@@ -384,6 +391,9 @@ def create_graph(ipfs_tools):
                         "attributes": valid_attributes,
                     }
                 )
+                
+                # Print the metadata creation result
+                print(f"\n--- Metadata Creation Tool Result ---\n{result}\n----------------------------")
 
                 new_messages.append(
                     ToolMessage(
@@ -746,15 +756,43 @@ def create_graph(ipfs_tools):
                 commercial_rev_share = terms_data["commercial_rev_share"]
                 derivatives_allowed = terms_data["derivatives_allowed"]
                 registration_metadata = terms_data["registration_metadata"]
+                
+                # Fix the metadata format - ensure hashes have 0x prefix
+                fixed_metadata = {}
+                if registration_metadata:
+                    fixed_metadata = {
+                        "ip_metadata_uri": registration_metadata.get("ip_metadata_uri", ""),
+                        "ip_metadata_hash": registration_metadata.get("ip_metadata_hash", ""),
+                        "nft_metadata_uri": registration_metadata.get("nft_metadata_uri", ""),
+                        "nft_metadata_hash": registration_metadata.get("nft_metadata_hash", "")
+                    }
+                    
+                    # Add 0x prefix to hashes if missing
+                    if "ip_metadata_hash" in fixed_metadata and not fixed_metadata["ip_metadata_hash"].startswith("0x"):
+                        fixed_metadata["ip_metadata_hash"] = "0x" + fixed_metadata["ip_metadata_hash"]
+                    
+                    if "nft_metadata_hash" in fixed_metadata and not fixed_metadata["nft_metadata_hash"].startswith("0x"):
+                        fixed_metadata["nft_metadata_hash"] = "0x" + fixed_metadata["nft_metadata_hash"]
+
+                # Convert parameters to strings as expected by the tool
+                tool_args = {
+                    "commercial_rev_share": str(commercial_rev_share),
+                    "derivatives_allowed": str(derivatives_allowed).lower(),
+                    "registration_metadata": fixed_metadata
+                }
+                
+                # Print the arguments being sent to the tool for debugging
+                print(f"\n--- Mint and Register IP Tool Arguments ---")
+                print(f"commercial_rev_share: {tool_args['commercial_rev_share']} (type: {type(tool_args['commercial_rev_share'])})")
+                print(f"derivatives_allowed: {tool_args['derivatives_allowed']} (type: {type(tool_args['derivatives_allowed'])})")
+                print(f"registration_metadata: {json.dumps(tool_args['registration_metadata'], indent=2)}")
+                print("----------------------------\n")
 
                 # Call the mint_and_register_ip_with_terms tool
-                result = await mint_register_ip_tool.ainvoke(
-                    {
-                        "commercial_rev_share": commercial_rev_share,
-                        "derivatives_allowed": derivatives_allowed,
-                        "registration_metadata": registration_metadata,
-                    }
-                )
+                result = await mint_register_ip_tool.ainvoke(tool_args)
+                
+                # Print the mint and register IP result
+                print(f"\n--- Mint and Register IP Tool Result ---\n{result}\n----------------------------")
 
                 # Check if there was an error related to derivatives
                 if (
@@ -762,13 +800,11 @@ def create_graph(ipfs_tools):
                     in result
                 ):
                     # Retry with derivatives allowed
-                    result = await mint_register_ip_tool.ainvoke(
-                        {
-                            "commercial_rev_share": commercial_rev_share,
-                            "derivatives_allowed": True,  # Force derivatives to be allowed
-                            "registration_metadata": registration_metadata,
-                        }
-                    )
+                    tool_args["derivatives_allowed"] = "true"
+                    result = await mint_register_ip_tool.ainvoke(tool_args)
+                    
+                    # Print the retry result
+                    print(f"\n--- Mint and Register IP Tool Retry Result ---\n{result}\n----------------------------")
 
                 # Parse the result to extract IP ID and license terms IDs for the next step
                 import re
@@ -805,14 +841,20 @@ def create_graph(ipfs_tools):
 
                 # If we still don't have an IP ID, the minting failed
                 if not ip_id:
-                    # Try one more time with more reasonable defaults
-                    result = await mint_register_ip_tool.ainvoke(
-                        {
-                            "commercial_rev_share": 15,  # Use a reasonable default
-                            "derivatives_allowed": True,  # Allow derivatives
-                            "registration_metadata": registration_metadata,
-                        }
-                    )
+                    # Try one more time with more reasonable defaults and fixed metadata format
+                    tool_args = {
+                        "commercial_rev_share": "15",
+                        "derivatives_allowed": "true",
+                        "registration_metadata": fixed_metadata
+                    }
+                    
+                    print(f"\n--- Final Retry Arguments ---")
+                    print(json.dumps(tool_args, indent=2))
+                    print("----------------------------\n")
+                    
+                    result = await mint_register_ip_tool.ainvoke(tool_args)
+                    
+                    print(f"\n--- Final Retry Mint and Register IP Tool Result ---\n{result}\n----------------------------")
 
                     # Extract IP ID again
                     ip_id_match = re.search(r"IP ID: (0x[a-fA-F0-9]+)", result)
@@ -863,6 +905,11 @@ def create_graph(ipfs_tools):
                 }
 
             except Exception as e:
+                import traceback
+                print(f"\n--- Exception in MintRegisterIP ---")
+                print(traceback.format_exc())
+                print("----------------------------\n")
+                
                 return {
                     "messages": [
                         ToolMessage(
@@ -923,6 +970,9 @@ def create_graph(ipfs_tools):
                 result = await mint_license_tokens_tool.ainvoke(
                     {"licensor_ip_id": ip_id, "license_terms_id": license_terms_id}
                 )
+                
+                # Print the mint license tokens result
+                print(f"\n--- Mint License Tokens Tool Result ---\n{result}\n----------------------------")
 
                 # Extract Transaction Hash for license token
                 import re

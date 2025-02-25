@@ -13,6 +13,6 @@ dependencies = [
     "loguru>=0.7.3",
     "python-dotenv>=1.0.0",
     "ruff>=0.9.7",
-    "story-protocol-python-sdk>=0.3.7",
+    "story-protocol-python-sdk @ git+https://github.com/storyprotocol/python-sdk.git",
     "web3>=7.8.0",
 ]
