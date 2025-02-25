@@ -17,8 +17,10 @@ from loguru import logger
 from langsmith import Client, traceable
 import uuid
 from langchain_core.runnables import RunnableLambda
+import os
+os.environ["LANGCHAIN_PROJECT"] = "langgraph-mcp-agent"
 
-# Initialize LangSmith client
+# Initialize LangSmith client with explicit project name
 langsmith_client = Client()
 
 
@@ -117,12 +119,14 @@ def create_graph(ipfs_tools):
     # Simpler model for negotiation and other tasks
     simple_model = ChatOpenAI(model="gpt-4o-mini")
 
+    @traceable(name="Call LLM", run_type="chain")
     class CallLLM:
         async def ainvoke(self, state, config=None):
             messages = state["messages"]
             response = await model.ainvoke(messages)
             return {"messages": [response]}
 
+    @traceable(name="Run Tool", run_type="chain")
     class RunTool:
         async def ainvoke(self, state, config=None):
             new_messages = []
@@ -170,6 +174,7 @@ def create_graph(ipfs_tools):
 
             return {"messages": new_messages}
 
+    @traceable(name="Run IPFS Tool", run_type="chain")
     class RunIPFSTool:
         async def ainvoke(self, state, config=None):
             new_messages = []
@@ -210,6 +215,7 @@ def create_graph(ipfs_tools):
 
             return {"messages": new_messages}
 
+    @traceable(name="Generate Metadata", run_type="chain")
     class GenerateMetadata:
         async def ainvoke(self, state, config=None):
             print("Generating metadata...")
@@ -286,6 +292,7 @@ def create_graph(ipfs_tools):
                 ]
             }
 
+    @traceable(name="Create Metadata", run_type="chain")
     class CreateMetadata:
         async def ainvoke(self, state, config=None):
             print("Creating metadata...")
@@ -406,6 +413,7 @@ def create_graph(ipfs_tools):
 
             return {"messages": new_messages}
 
+    @traceable(name="Human Review", run_type="chain")
     def human_review_node(state):
         last_message = state["messages"][-1]
 
@@ -444,6 +452,7 @@ def create_graph(ipfs_tools):
                 "next": "call_llm",
             }
 
+    @traceable(name="Negotiate Terms", run_type="chain")
     class NegotiateTerms:
         async def ainvoke(self, state, config=None):
             # Check if this is the first negotiation or a subsequent one
@@ -719,6 +728,7 @@ def create_graph(ipfs_tools):
                 ]
             }
 
+    @traceable(name="Mint Register IP", run_type="chain")
     class MintRegisterIP:
         async def ainvoke(self, state, config=None):
             print("Minting and registering IP...")
@@ -875,6 +885,7 @@ def create_graph(ipfs_tools):
                     ]
                 }
 
+    @traceable(name="Mint License Tokens", run_type="chain")
     class MintLicenseTokens:
         async def ainvoke(self, state, config=None):
             print("Minting license tokens...")
@@ -1014,6 +1025,7 @@ def create_graph(ipfs_tools):
     workflow.add_edge("mint_license_tokens", END)
 
     # Add a new node to handle failed generation
+    @traceable(name="Handle Failed Generation", run_type="chain")
     def handle_failed_generation(state):
         # Get the original prompt from the human message
         original_prompt = ""
@@ -1049,6 +1061,8 @@ def create_graph(ipfs_tools):
     return graph
 
 
+# Add traceable decorator to the run_agent function
+@traceable(name="Story IP Creator Agent", run_type="chain")
 async def run_agent():
     # Create the MCP client and keep it open for the entire session
     async with MultiServerMCPClient() as client:
@@ -1096,11 +1110,17 @@ async def run_agent():
         }
 
         # Add thread_id to the config
-        config = {"configurable": {"thread_id": thread_id}}
+        config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "project_name": "langgraph-mcp-agent"  # Ensure consistent project name
+            }
+        }
 
         print("\nStarting the creation process...\n")
 
-        # Process all events and handle interrupts at any stage
+        # Add traceable decorator to the process_events function inside run_agent
+        @traceable(name="Process Events", run_type="chain")
         async def process_events(input_data):
             async for event in graph.astream(input_data, config, stream_mode="updates"):
                 # Only process interrupts
