@@ -808,6 +808,7 @@ dependencies = [
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "loguru" },
+    { name = "python-dotenv" },
     { name = "ruff" },
     { name = "web3" },
 ]
@@ -820,6 +821,7 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=0.3.6" },
     { name = "langgraph", specifier = ">=0.2.74" },
     { name = "loguru", specifier = ">=0.7.3" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "ruff", specifier = ">=0.9.7" },
     { name = "web3", specifier = ">=7.8.0" },
 ]
