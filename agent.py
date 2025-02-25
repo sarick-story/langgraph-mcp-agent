@@ -56,7 +56,7 @@ async def setup_mcp_client():
         await client.connect_to_server(
             "story_server",
             command="python",
-            args=["/Users/sarickshah/Documents/story/story-sdk-mcp/server.py"],
+            args=["../story-sdk-mcp/server.py"],
         )
         ipfs_tools = [
             tool
@@ -1054,7 +1054,7 @@ async def run_agent():
         await client.connect_to_server(
             "story_server",
             command="python",
-            args=["/Users/sarickshah/Documents/story/story-sdk-mcp/server.py"],
+            args=["../story-sdk-mcp/server.py"],
         )
         # Get all required tools
         ipfs_tools = [

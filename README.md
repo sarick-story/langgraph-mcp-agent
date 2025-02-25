@@ -26,6 +26,18 @@ This agent helps users create AI-generated images, upload them to IPFS, and regi
 - OpenAI API key (for DALL-E and GPT models)
 - Story SDK
 
+## Directory Structure 
+The agent expects a specific directory structure to function properly:
+
+```
+your-root-directory/
+├── langgraph-mcp-agent/    # This repository
+│   ├── agent.py
+│   └── ...
+├── story-sdk-mcp/          # The MCP server repository
+│   ├── server.py
+│   └── ...
+```
 ## Installation
 
 1. Install uv (Universal Versioner for Python):
