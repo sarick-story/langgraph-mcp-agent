@@ -14,13 +14,8 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command, interrupt
 from loguru import logger
-from langsmith import Client, traceable
 import uuid
 from langchain_core.runnables import RunnableLambda
-
-# Initialize LangSmith client
-langsmith_client = Client()
-
 
 # Define our state
 class AgentState(TypedDict):
@@ -30,7 +25,6 @@ class AgentState(TypedDict):
 
 # Create DALL-E tool
 @tool
-@traceable(name="DALL-E Image Generation")
 def generate_image(prompt: str) -> str:
     """Generate an image using DALL-E 3 based on the prompt."""
     dalle = DallEAPIWrapper(model="dall-e-3")
@@ -40,7 +34,6 @@ def generate_image(prompt: str) -> str:
 
 # Create human feedback tool
 @tool
-@traceable(name="Human Feedback")
 def get_human_feedback(image_url: str) -> str:
     """Get human feedback on whether to upload the image to IPFS."""
     response = interrupt(
