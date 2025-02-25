@@ -16,6 +16,11 @@ from langgraph.types import Command, interrupt
 from loguru import logger
 import uuid
 from langchain_core.runnables import RunnableLambda
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Define our state
 class AgentState(TypedDict):
