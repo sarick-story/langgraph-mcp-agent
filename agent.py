@@ -984,8 +984,9 @@ def create_graph(ipfs_tools):
             x["messages"]
             and isinstance(x["messages"][-1], ToolMessage)
             and x["messages"][-1].name == "generate_image"
+            and "Generated image URL:" in x["messages"][-1].content
         )
-        else END,  # This should rarely happen, but provides a safety exit
+        else "handle_failed_generation"  # New node to handle failed generation
     )
 
     # Human review -> either run IPFS tool or call LLM again based on response
@@ -1011,6 +1012,28 @@ def create_graph(ipfs_tools):
 
     # Mint license tokens -> END
     workflow.add_edge("mint_license_tokens", END)
+
+    # Add a new node to handle failed generation
+    def handle_failed_generation(state):
+        # Get the original prompt from the human message
+        original_prompt = ""
+        for message in state["messages"]:
+            if isinstance(message, HumanMessage) and "Generate" in message.content:
+                original_prompt = message.content.replace("Generate ", "")
+                break
+        
+        print(f"\nUnable to generate image of {original_prompt}")
+        new_prompt = input("Please try a different prompt: ")
+        
+        return {
+            "messages": [
+                HumanMessage(content=f"Generate {new_prompt}")
+            ],
+            "next": "call_llm"  # Go back to the LLM with the new prompt
+        }
+
+    # Add the new node to the workflow
+    workflow.add_node("handle_failed_generation", RunnableLambda(handle_failed_generation))
 
     # Set up memory
     memory = MemorySaver()

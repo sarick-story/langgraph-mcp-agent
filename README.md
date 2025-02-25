@@ -14,14 +14,6 @@ This agent helps users create AI-generated images, upload them to IPFS, and regi
 6. Minting and registering the IP on Story
 7. Minting license tokens for the IP
 
-## Requirements
-
-- Python 3.9+
-- LangGraph
-- LangChain
-- OpenAI API key (for DALL-E and GPT models)
-- Story SDK
-
 ## Installation
 
 1. Install uv (Universal Versioner for Python):
