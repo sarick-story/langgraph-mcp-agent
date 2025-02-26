@@ -16,9 +16,9 @@ from langgraph.types import Command, interrupt
 from loguru import logger
 import uuid
 from langchain_core.runnables import RunnableLambda
-import os
 from dotenv import load_dotenv
 import json
+import re
 
 # Load environment variables from .env file
 load_dotenv()
@@ -150,9 +150,6 @@ def create_graph(ipfs_tools):
                     if not isinstance(result, str):
                         result = str(result)
                     
-                    # Print the tool result
-                    print(f"\n--- {tool_call['name']} Tool Result ---\n{result}\n----------------------------")
-
                     new_messages.append(
                         ToolMessage(
                             content=result,
@@ -193,9 +190,6 @@ def create_graph(ipfs_tools):
                     if not isinstance(result, str):
                         result = str(result)
                     
-                    # Print the IPFS tool result
-                    print(f"\n--- IPFS Upload Tool Result ---\n{result}\n----------------------------")
-
                     new_messages.append(
                         ToolMessage(
                             content=result,
@@ -392,9 +386,6 @@ def create_graph(ipfs_tools):
                     }
                 )
                 
-                # Print the metadata creation result
-                print(f"\n--- Metadata Creation Tool Result ---\n{result}\n----------------------------")
-
                 new_messages.append(
                     ToolMessage(
                         content=result,
@@ -480,7 +471,6 @@ def create_graph(ipfs_tools):
                         metadata_section = message.content.split(
                             "Registration metadata for minting:"
                         )[1].strip()
-                        import json
 
                         try:
                             registration_metadata = json.loads(metadata_section)
@@ -780,19 +770,9 @@ def create_graph(ipfs_tools):
                     "derivatives_allowed": str(derivatives_allowed).lower(),
                     "registration_metadata": fixed_metadata
                 }
-                
-                # Print the arguments being sent to the tool for debugging
-                print(f"\n--- Mint and Register IP Tool Arguments ---")
-                print(f"commercial_rev_share: {tool_args['commercial_rev_share']} (type: {type(tool_args['commercial_rev_share'])})")
-                print(f"derivatives_allowed: {tool_args['derivatives_allowed']} (type: {type(tool_args['derivatives_allowed'])})")
-                print(f"registration_metadata: {json.dumps(tool_args['registration_metadata'], indent=2)}")
-                print("----------------------------\n")
 
                 # Call the mint_and_register_ip_with_terms tool
                 result = await mint_register_ip_tool.ainvoke(tool_args)
-                
-                # Print the mint and register IP result
-                print(f"\n--- Mint and Register IP Tool Result ---\n{result}\n----------------------------")
 
                 # Check if there was an error related to derivatives
                 if (
@@ -803,12 +783,6 @@ def create_graph(ipfs_tools):
                     tool_args["derivatives_allowed"] = "true"
                     result = await mint_register_ip_tool.ainvoke(tool_args)
                     
-                    # Print the retry result
-                    print(f"\n--- Mint and Register IP Tool Retry Result ---\n{result}\n----------------------------")
-
-                # Parse the result to extract IP ID and license terms IDs for the next step
-                import re
-
                 ip_id = None
                 tx_hash = None
                 license_terms_ids = []
@@ -854,8 +828,6 @@ def create_graph(ipfs_tools):
                     
                     result = await mint_register_ip_tool.ainvoke(tool_args)
                     
-                    print(f"\n--- Final Retry Mint and Register IP Tool Result ---\n{result}\n----------------------------")
-
                     # Extract IP ID again
                     ip_id_match = re.search(r"IP ID: (0x[a-fA-F0-9]+)", result)
                     if ip_id_match:
