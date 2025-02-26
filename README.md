@@ -14,9 +14,7 @@ This agent helps users create AI-generated images, upload them to IPFS, and regi
 6. Minting and registering the IP on Story
 7. Minting license tokens for the IP
 
-
 ![image](https://github.com/user-attachments/assets/31ffda62-2521-4b4d-90f8-5db1cc3f02ea)
-
 
 ## Requirements
 
@@ -26,7 +24,8 @@ This agent helps users create AI-generated images, upload them to IPFS, and regi
 - OpenAI API key (for DALL-E and GPT models)
 - Story SDK
 
-## Directory Structure 
+## Directory Structure
+
 The agent expects a specific directory structure to function properly:
 
 ```
@@ -38,25 +37,32 @@ your-root-directory/
 │   ├── server.py
 │   └── ...
 ```
+
 ## Installation
 
 1. Install uv (Universal Versioner for Python):
+
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
-2. Clone the repository and navigate to the project directory
+2. Clone this repository and navigate to the project directory
 
 3. Install dependencies using uv:
+
    ```bash
    uv sync
    ```
 
 4. Set up environment variables:
+
    ```bash
    cp .env.example .env
    ```
+
    Then edit the `.env` file with your API keys and configuration.
+
+5. Clone the [story-sdk-mcp](https://github.com/piplabs/story-sdk-mcp) repository **into the same folder that you cloned this repository**, as shown in the above **Directory Structure** section. Follow the [README instructions](https://github.com/piplabs/story-sdk-mcp/blob/main/README.md#setup) to set up and install that mcp server, making sure to set up **all** of the .env variables. You do not have to run it, it just has to be in the same folder so this agent can access it.
 
 ## Usage
 
