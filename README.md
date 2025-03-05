@@ -40,7 +40,7 @@ your-root-directory/
 
 ## Installation
 
-1. Install uv (Universal Versioner for Python):
+1. Install uv:
 
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
