@@ -30,11 +30,13 @@ The agent expects a specific directory structure to function properly:
 
 ```
 your-root-directory/
-├── langgraph-mcp-agent/    # This repository
+├── langgraph-mcp-agent/
 │   ├── agent.py
 │   └── ...
-├── story-sdk-mcp/          # The MCP server repository
-│   ├── server.py
+├── story-mcp-hub/          
+│   ├── story-sdk-mcp/
+│   │   ├── server.py
+│   │   └── ...
 │   └── ...
 ```
 
@@ -62,7 +64,7 @@ your-root-directory/
 
    Then edit the `.env` file with your API keys and configuration.
 
-5. Clone the [story-sdk-mcp](https://github.com/piplabs/story-sdk-mcp) repository **into the same folder that you cloned this repository**, as shown in the above **Directory Structure** section. Follow the [README instructions](https://github.com/piplabs/story-sdk-mcp/blob/main/README.md#setup) to set up and install that mcp server, making sure to set up **all** of the .env variables. You do not have to run it, it just has to be in the same folder so this agent can access it.
+5. Clone the [story-sdk-mcp](https://github.com/piplabs/story-mcp-hub) repository **into the same folder that you cloned this repository**, as shown in the above **Directory Structure** section. Follow the [README instructions](https://github.com/piplabs/story-sdk-mcp/blob/main/README.md#setup) to set up and install that mcp server, making sure to set up **all** of the .env variables. You do not have to run it, it just has to be in the same folder so this agent can access it.
 
 ## Usage
 

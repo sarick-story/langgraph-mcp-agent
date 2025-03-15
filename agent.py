@@ -50,29 +50,6 @@ def get_human_feedback(image_url: str) -> str:
     logger.info(f"Human feedback received: {response['data']}")
     return response["data"]
 
-
-async def setup_mcp_client():
-    """Setup MCP client and get IPFS tools"""
-    async with MultiServerMCPClient() as client:
-        await client.connect_to_server(
-            "story_server",
-            command="python",
-            args=["../story-sdk-mcp/server.py"],
-        )
-        ipfs_tools = [
-            tool
-            for tool in client.get_tools()
-            if tool.name
-            in [
-                "upload_image_to_ipfs",
-                "create_ip_metadata",
-                "mint_and_register_ip_with_terms",
-                "mint_license_tokens",
-            ]
-        ]
-        return ipfs_tools
-
-
 class State(MessagesState):
     """Simple state."""
 
@@ -1076,7 +1053,7 @@ async def run_agent():
         await client.connect_to_server(
             "story_server",
             command="python",
-            args=["../story-sdk-mcp/server.py"],
+            args=["../story-mcp-hub/story-sdk-mcp/server.py"],
         )
         # Get all required tools
         ipfs_tools = [
